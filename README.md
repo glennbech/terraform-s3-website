@@ -2,7 +2,7 @@
 
 ## Oppgaven
 
-I denne øvelsen skal du hoste en React-applikasjon som viser kryptovaluta-informasjon på en morsom og interaktiv måte. Applikasjonen er allerede bygget og klar til å deployes - din jobb er å lære hvordan man bruker Terraform for å sette opp infrastrukturen for å hoste den på AWS.
+I denne øvelsen skal du hoste en React-applikasjon som viser kryptovaluta-informasjon. Applikasjonen er allerede bygget og klar til å deployes. Du skal lære hvordan Terraform brukes til å sette opp infrastrukturen som hoster den på AWS.
 
 Du vil bruke **Infrastructure as Code (IaC)** for å automatisere hele prosessen med å sette opp:
 - En S3 bucket for å hoste nettsiden
@@ -12,7 +12,7 @@ Du vil bruke **Infrastructure as Code (IaC)** for å automatisere hele prosessen
 
 ## Du vil lære
 
-Gjennom denne øvelsen vil du mestre:
+Gjennom denne øvelsen lærer du om:
 
 - **Terraform grunnleggende**: Ressurser, variabler, outputs og state management
 - **AWS S3 Website Hosting**: Konfigurasjon av S3 buckets for statiske nettsider
@@ -22,7 +22,19 @@ Gjennom denne øvelsen vil du mestre:
 - **CI/CD med GitHub Actions**: Automatisere infrastruktur-deployment
 - **Infrastructure as Code**: Best practices for å versjonere og administrere infrastruktur
 
+## AWS-tjenester i denne labben
+
+- **S3 (Simple Storage Service)**: Objektlager. Brukes til å hoste de statiske filene (HTML, CSS, JS) som utgjør nettsiden, og til å lagre Terraform state remote.
+- **CloudFront**: AWS sitt CDN. Distribuerer nettsiden globalt og legger HTTPS på toppen av S3.
+- **Route53**: AWS sin DNS-tjeneste. Brukes til å peke et custom domenenavn mot CloudFront-distribusjonen.
+- **ACM (Certificate Manager)**: Utsteder og håndterer TLS-sertifikater. Brukes til å gi CloudFront et gyldig HTTPS-sertifikat for custom domenet.
+- **IAM**: Identity and Access Management. Brukes gjennom bucket policies og GitHub Actions-credentials for å styre hvem som kan lese og endre hva.
+
 ## Forberedelser
+
+### Om GitHub forks
+
+En **fork** er din egen kopi av et GitHub-repo under din egen konto. Du jobber i din kopi uten å påvirke originalen, og kan senere åpne pull requests tilbake hvis du vil bidra endringer. I denne labben trenger du en fork av to grunner: du må kunne pushe commits for å teste CI/CD-pipelinen, og GitHub Actions-workflowen kjører mot secrets du selv legger inn i ditt eget repo.
 
 ### Steg 0: Opprett GitHub Codespace fra din fork
 
@@ -30,10 +42,35 @@ Gjennom denne øvelsen vil du mestre:
 2. **Åpne Codespace**: Klikk på "Code" → "Codespaces" → "Create codespace on main"
 3. **Vent på at Codespace starter**: Dette kan ta et par minutter første gang
 4. **Terminalvindu**: Du vil utføre de fleste kommandoer i terminalen som åpner seg nederst i Codespace
-5. **AWS Credentials**. Kjør `aws configure` og legg inn AWS aksessnøkler.
 
-**Ekspert tips**: Trykk `.` (punktum) når du er i et GitHub repository for å åpne det direkte i en nettleser-basert VS Code editor. Dette er raskere enn å starte en full Codespace og perfekt for raske editeringer! 
+**Tips**: Trykk `.` (punktum) når du er i et GitHub repository for å åpne det direkte i en nettleser-basert VS Code editor. Dette er raskere enn å starte en full Codespace for små editeringer.
 
+### Konfigurer AWS-nøkler i Codespace
+
+Terraform og AWS CLI trenger AWS-nøkler for å kunne snakke med AWS-kontoen din. En Codespace starter uten disse, så du må konfigurere dem én gang per Codespace.
+
+Hent `Access Key ID` og `Secret Access Key` fra AWS Academy / IAM, og kjør:
+
+```bash
+aws configure
+```
+
+Fyll inn verdiene når du blir spurt:
+
+- **AWS Access Key ID**: fra kontoen din
+- **AWS Secret Access Key**: fra kontoen din
+- **Default region name**: `eu-west-1`
+- **Default output format**: `json`
+
+Hvis du bruker AWS Academy må du i tillegg sette `AWS_SESSION_TOKEN`. Verifiser at nøklene fungerer:
+
+```bash
+aws sts get-caller-identity
+```
+
+Kommandoen skal returnere konto-ID og bruker-ARN. Får du en feilmelding, er nøklene feil eller utløpt.
+
+**Merk**: Nøklene lagres i `~/.aws/credentials` inne i Codespacen. Hvis Codespacen slettes eller resettes, må du kjøre `aws configure` på nytt.
 
 ### Steg 1: Verifiser miljøet
 
@@ -307,89 +344,25 @@ I denne delen skal vi utvide infrastrukturen med mer avanserte Terraform-konsept
 
 Når flere personer jobber med samme infrastruktur, eller når vi skal automatisere med CI/CD, trenger vi en felles plass å lagre Terraform state. Lokal state fungerer ikke i team-miljøer.
 
-### Steg 1: Opprett Backend-ressurser
+### Steg 1: Konfigurer Backend
 
-Først må vi lage en S3 bucket og DynamoDB-tabell for state management. Disse må opprettes **før** vi konfigurerer backend.
+Klassen har en felles S3 bucket for Terraform state: `pgr301-terraform-state` i `eu-west-1`. Du trenger ikke opprette en egen bucket — bruk denne, men gi din state en unik `key` slik at du ikke overskriver medstudenter.
 
-1. **Opprett en ny fil** `backend-setup.tf` i rotmappen:
-
-```hcl
-# This file creates the resources needed for Terraform remote state
-# Run this FIRST before configuring the backend
-
-data "aws_region" "current" {}
-
-resource "aws_s3_bucket" "terraform_state" {
-  bucket = "ditt-navn-terraform-state"  # Bytt til unikt navn
-
-  tags = {
-    Name        = "Terraform State"
-    Environment = "Infrastructure"
-  }
-}
-
-resource "aws_s3_bucket_versioning" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-resource "aws_dynamodb_table" "terraform_locks" {
-  name         = "ditt-navn-terraform-state-locks"  # Bytt til unikt navn
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-
-  tags = {
-    Name = "Terraform State Locks"
-  }
-}
-
-output "backend_config" {
-  value = <<-EOT
-    backend "s3" {
-      bucket         = "${aws_s3_bucket.terraform_state.id}"
-      key            = "website/terraform.tfstate"
-      region         = "${data.aws_region.current.name}"
-      dynamodb_table = "${aws_dynamodb_table.terraform_locks.id}"
-      encrypt        = true
-    }
-  EOT
-  description = "Backend configuration to add to your terraform block"
-}
-```
-
-2. **Deploy backend-ressursene**:
-
-```bash
-terraform apply
-```
-
-**Merk output** som viser backend-konfigurasjonen du skal bruke.
-
-### Steg 2: Konfigurer Backend
-
-1. **Opprett fil** `backend.tf` i rotmappen.
-
-Du kan kopiere backend-konfigurasjonen fra output av forrige `terraform apply`, eller skrive den manuelt:
+1. **Opprett fil** `backend.tf` i rotmappen:
 
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "ditt-navn-terraform-state"  # Samme som i backend-setup.tf
-    key            = "website/terraform.tfstate"
-    region         = "eu-west-1"  # Din region
-    dynamodb_table = "ditt-navn-terraform-state-locks"  # Samme som i backend-setup.tf
-    encrypt        = true
+    bucket       = "pgr301-terraform-state"
+    key          = "ola-nordmann/website/terraform.tfstate"  # Bytt "ola-nordmann" til ditt eget navn
+    region       = "eu-west-1"
+    use_lockfile = true
+    encrypt      = true
   }
 }
 ```
+
+`key` er stien til din state-fil inne i bucketen. Prefikset (f.eks. `ola-nordmann/`) skiller din state fra andre studenters. `use_lockfile = true` ber Terraform om å låse state via en lås-fil i selve S3-bucketen (støttet fra Terraform 1.10).
 
 2. **Migrer state til remote backend**:
 
@@ -403,7 +376,7 @@ Terraform vil spørre om du vil kopiere eksisterende state til det nye backend. 
    - Gå til S3 Console og se at state-filen er lastet opp
    - Din lokale `terraform.tfstate` skal nå være tom eller borte
 
-**Gratulerer!** State er nå lagret sentralt. Hvis flere personer jobber på samme prosjekt, vil de alle dele samme state. I tillegg er dere nå beskyttet mot at flere gjør `terraform apply` samtidig - DynamoDB-tabellen sørger for state locking slik at kun én person kan gjøre endringer om gangen.
+State er nå lagret sentralt. Hvis flere personer jobber på samme prosjekt, vil de alle dele samme state. I tillegg er dere nå beskyttet mot at flere gjør `terraform apply` samtidig — S3-låsefilen sørger for state locking slik at kun én person kan gjøre endringer om gangen.
 
 ### Test State Locking
 
@@ -412,7 +385,7 @@ Du kan teste state locking ved å åpne to terminaler og prøve å kjøre `terra
 1. **Terminal 1**: Kjør `terraform apply` og bekreft med `yes`
 2. **Terminal 2**: Kjør raskt `terraform apply` mens Terminal 1 fortsatt jobber
 
-**Tips**: Du må være litt rask, siden `terraform apply` går ganske fort når det ikke er mange endringer!
+Vær rask: `terraform apply` fullføres raskt når det ikke er mange endringer.
 
 Du vil se at Terminal 2 får en feilmelding om at state er låst, med informasjon om hvem som holder låsen. Dette forhindrer at to personer gjør motstridende endringer samtidig.
 
@@ -422,9 +395,7 @@ Du vil se at Terminal 2 får en feilmelding om at state er låst, med informasjo
 
 ### Hva er moduler?
 
-Moduler er Terraforms måte å pakke og gjenbruke infrastruktur-kode på. I stedet for å copy-paste kode, lager vi en modul som kan brukes flere steder med ulike konfigurasjoner.
-
-**Analogi**: En modul er som en funksjon i programmering - den tar inputs (variabler), utfører operasjoner (ressurser), og returnerer outputs.
+Moduler er Terraforms måte å pakke og gjenbruke infrastruktur-kode på. I stedet for å duplisere kode, lager vi en modul som kan brukes flere steder med ulike konfigurasjoner. Strukturelt ligner en modul på en funksjon i et programmeringsspråk: variablene er input, ressursene er logikken, og outputs er returverdiene.
 
 ### Modulstruktur
 
@@ -568,160 +539,28 @@ output "bucket_arn" {
 
 ```
 
-### Viktig: Før du bruker modulen - State Management
+### Før du bruker modulen: Destroy først
 
-Før vi refaktorerer koden til å bruke modulen, må vi håndtere et kritisk problem:
+Når du flytter ressurser fra root til en modul, endrer adressene seg:
 
-**Når du flytter ressurser fra root til en modul, endrer adressene seg:**
 - Gammel adresse: `aws_s3_bucket.website`
 - Ny adresse: `module.s3_website.aws_s3_bucket.website`
 
-Terraform vil tro at du vil:
-1. Slette de gamle ressursene
-2. Opprette nye ressurser med samme konfigurasjon
-
-**Resultat**: Din S3 bucket blir slettet og gjenskapt!
-
-### Velg din vei: Red Pill eller Blue Pill?
-
-#### Blue Pill - Den enkle veien
-
-**"Ignorance is bliss"** - Start på nytt med modulen.
+Terraform ser dette som sletting av gamle ressurser og oppretting av nye. Siden dette er en demo-bucket uten viktige data, river vi ned eksisterende infrastruktur og bygger opp på nytt med modulen.
 
 1. **Tøm bucketen**:
+
 ```bash
 aws s3 rm s3://ditt-bucket-navn --recursive
 ```
 
 2. **Destroy eksisterende infrastruktur**:
+
 ```bash
 terraform destroy
 ```
 
-3. **Fortsett til Del B** og bygg opp igjen med modul
-
-**Fordel**: Enkelt og greit
-**Ulempe**: Du mister eksisterende data (ok for demo)
-
----
-
-#### Red Pill - Power Move
-
-**"I want to see how deep the rabbit hole goes"** - Lær Terraform state management!
-
-Terraform har en innebygd måte å håndtere refactoring: `moved` blocks.
-
-**Steg 1**: Legg til `moved` blocks i **rot-nivå `main.tf`** (ikke
-modulens main.tf) som forteller Terraform hvor ressursene skal flyttes.
-
-Disse `moved` blokkene legges til **øverst** i rot-nivå `main.tf`, før de eksisterende ressursene:
-
-```hcl
-# Legg til i rot-nivå main.tf FØR du sletter de gamle ressursene
-moved {
-  from = aws_s3_bucket.website
-  to   = module.s3_website.aws_s3_bucket.website
-}
-
-moved {
-  from = aws_s3_bucket_website_configuration.website
-  to   = module.s3_website.aws_s3_bucket_website_configuration.website
-}
-
-moved {
-  from = aws_s3_bucket_public_access_block.website
-  to   = module.s3_website.aws_s3_bucket_public_access_block.website
-}
-
-moved {
-  from = aws_s3_bucket_policy.website
-  to   = module.s3_website.aws_s3_bucket_policy.website
-}
-```
-
-**Steg 2**: I rot-nivå `main.tf`, erstatt alle S3-ressursene med et modul-kall.
-
- **slett alle S3-ressursene** og erstatt med et modul-kall.
-
-```hcl
-module "s3_website" {
-  source = "./modules/s3-website"
-
-  bucket_name         = "ditt-bucket-navn"
-
-  tags = {
-    Name        = "Crypto Juice Exchange"
-    Environment = "Demo"
-    ManagedBy   = "Terraform"
-  }
-}
-```
-Etter denne endringen skal rot-nivå `main.tf` **kun** inneholde:
-- `moved` blokkene fra Steg 1
-- Modul-kallet nedenfor
-- Eventuelle outputs (som oppdateres i Steg 3)
-
-**Steg 3**: Oppdater outputs i root `main.tf` til å bruke module outputs:
-
-```hcl
-output "s3_website_url" {
-  value       = module.s3_website.website_url
-  description = "URL for the S3 hosted website"
-}
-
-output "bucket_name" {
-  value       = module.s3_website.bucket_name
-  description = "Name of the S3 bucket"
-}
-```
-
-**Steg 4**: Re-initialiser Terraform for modulen:
-
-```bash
-terraform init
-```
-
-**Steg 5**: Kjør plan og observer at ressursene flyttes uten å bli gjenskapt:
-
-```bash
-terraform plan
-```
-
-Du skal nå se linjer som bekrefter at ressursene flyttes i state, for eksempel:
-
-```
-# aws_s3_bucket.website has moved to module.s3_website.aws_s3_bucket.website
-# aws_s3_bucket_website_configuration.website has moved to module.s3_website.aws_s3_bucket_website_configuration.website
-# aws_s3_bucket_public_access_block.website has moved to module.s3_website.aws_s3_bucket_public_access_block.website
-# aws_s3_bucket_policy.website has moved to module.s3_website.aws_s3_bucket_policy.website
-```
-
-Terraform vil konkludere med: **"No changes. Your infrastructure matches the configuration."**
-
-Dette betyr at `moved` blokkene fungerte - ressursene blir flyttet i state uten å bli slettet og gjenskapt!
-
-**Steg 6**: Apply for å oppdatere state:
-
-```bash
-terraform apply
-```
-
-**Steg 7**: Når alt fungerer, kan du fjerne `moved` blocks (de trengs ikke lenger)
-
-**Du er nå ferdig!** Red Pill-brukere kan hoppe over Del B nedenfor og gå videre til Del 3: CloudFront CDN.
-
-**Fordel**: Lær avansert Terraform, ingen downtime
-**Ulempe**: Krever mer forståelse
-
----
-
-**Velg din vei**: Blue Pill-brukere fortsetter til Del B nedenfor. Red Pill-brukere hopper til Del 3.
-
----
-
-### Del B: Bruk modulen (Blue Pill)
-
-**Denne seksjonen er kun for Blue Pill-brukere som valgte å starte på nytt.**
+### Del B: Bruk modulen
 
 Nå skal du refaktorere root `main.tf` til å bruke modulen du nettopp laget.
 
@@ -782,16 +621,16 @@ resource "aws_s3_bucket_versioning" "website" {
 
 ---
 
-## Del 3: CloudFront CDN - Minimal Setup
+## Del 3: CloudFront CDN
 
 ### Hvorfor CloudFront?
 
-S3 website hosting er bra, men har begrensninger:
-- Ingen HTTPS support
-- Ikke globalt distribuert (slow for brukere langt fra bucket region)
-- Ingen custom domain uten ekstra setup
+S3 website hosting har begrensninger:
+- Ingen HTTPS-støtte
+- Ikke globalt distribuert (treg for brukere langt fra bucket-regionen)
+- Ingen custom domain uten ekstra oppsett
 
-CloudFront løser alt dette, og krever overraskende lite kode!
+CloudFront løser disse problemene.
 
 ### Legg til CloudFront Distribution
 
@@ -881,7 +720,7 @@ output "cloudfront_url" {
 terraform apply
 ```
 
-**Merk**: CloudFront deployment tar 5-15 minutter. Dette er normalt!
+**Merk**: CloudFront deployment tar 5-15 minutter.
 
 ### Test CDN
 
@@ -893,7 +732,7 @@ terraform output cloudfront_url
 - HTTPS fungerer automatisk
 - URL-en er global (CloudFront, ikke region-spesifikk)
 
-**Imponerende enkelt, ikke sant?** Med ~40 linjer kode har du global CDN med HTTPS!
+Med ~40 linjer kode har du global CDN med HTTPS.
 
 ---
 
@@ -901,12 +740,11 @@ terraform output cloudfront_url
 
 Du har nå lært:
 
-- **Remote State Management**: State deling i team og CI/CD
-- **Terraform-moduler**: Gjenbrukbar, DRY infrastruktur-kode
-- **CloudFront CDN**: Global distribusjon med HTTPS, minimal kode
-- **State Management med moved blocks**: Refaktorering uten downtime
+- **Remote State Management**: State-deling i team og CI/CD
+- **Terraform-moduler**: Gjenbrukbar infrastruktur-kode
+- **CloudFront CDN**: Global distribusjon med HTTPS
 
-**Neste steg**: Utforsk bonusoppgavene nedenfor for å lære enda mer om GitHub Actions CI/CD, custom domains, og avanserte Terraform-konsepter!
+**Neste steg**: Bonusoppgavene nedenfor dekker GitHub Actions CI/CD, custom domains, og flere Terraform-konsepter.
 
 ---
 
@@ -916,11 +754,10 @@ Du har nå lært:
 
 #### Hva er Data Sources?
 
-Så langt har vi kun brukt `resource` blokker som **oppretter** nye ressurser i AWS. Men hva hvis vi vil bruke noe som allerede eksisterer? Det er her `data` sources kommer inn.
+Så langt har vi kun brukt `resource`-blokker, som oppretter nye ressurser i AWS. En **data source** leser informasjon om eksisterende ressurser uten å endre dem:
 
-**Data sources** lar deg **lese** informasjon om eksisterende ressurser uten å endre dem. Tenk på det som:
-- `resource` = "Opprett dette" (write)
-- `data` = "Hent info om dette" (read-only)
+- `resource` oppretter (write)
+- `data` henter (read-only)
 
 #### Steg 1: Hent eksisterende Hosted Zone
 
@@ -1113,7 +950,7 @@ terraform output custom_domain_url
 
 5. **Test din custom domain**:
 
-Vent noen minutter på at CloudFront-distribusjonen er ferdig deployet, og åpne URL-en i nettleseren. Din side vil nå være tilgjengelig på `https://ditt-navn.thecloudcollege.com` med full HTTPS!
+Vent noen minutter på at CloudFront-distribusjonen er ferdig deployet, og åpne URL-en i nettleseren. Siden er nå tilgjengelig på `https://ditt-navn.thecloudcollege.com` med HTTPS.
 
 **Nøkkelpunkter**:
 - **Data sources** lar deg hente informasjon om eksisterende ressurser uten å endre dem
@@ -1266,7 +1103,7 @@ git push origin test-pipeline
    - GitHub Actions kjører `terraform apply` automatisk
    - Infrastrukturen oppdateres uten manuell intervensjon
 
-**Gratulerer!** Du har nå full CI/CD for infrastrukturen din.
+Du har nå full CI/CD for infrastrukturen din.
 
 ---
 
@@ -1301,7 +1138,7 @@ variable "bucket_name" {
 
 ## Appendix A: Provider Configuration i Moduler
 
-Denne seksjonen gir en grundig forklaring av hvordan Terraform håndterer providers i moduler, spesielt når du trenger å bruke flere AWS-regioner.
+Denne seksjonen forklarer hvordan Terraform håndterer providers i moduler, spesielt når flere AWS-regioner er i bruk.
 
 ### Hvor skal providers konfigureres?
 
@@ -1337,7 +1174,7 @@ module "s3_website" {
 }
 ```
 
-Dette fungerer utmerket for enkle use cases der du kun trenger én provider-konfigurasjon.
+Dette fungerer for enkle tilfeller der du kun trenger én provider-konfigurasjon.
 
 ### Multi-Region Setup: Aliased Providers
 
