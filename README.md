@@ -43,10 +43,35 @@ En **fork** er din egen kopi av et GitHub-repo under din egen konto. Du jobber i
 2. **Åpne Codespace**: Klikk på "Code" → "Codespaces" → "Create codespace on main"
 3. **Vent på at Codespace starter**: Dette kan ta et par minutter første gang
 4. **Terminalvindu**: Du vil utføre de fleste kommandoer i terminalen som åpner seg nederst i Codespace
-5. **AWS Credentials**. Kjør `aws configure` og legg inn AWS aksessnøkler.
 
 **Tips**: Trykk `.` (punktum) når du er i et GitHub repository for å åpne det direkte i en nettleser-basert VS Code editor. Dette er raskere enn å starte en full Codespace for små editeringer.
 
+### Konfigurer AWS-nøkler i Codespace
+
+Terraform og AWS CLI trenger AWS-nøkler for å kunne snakke med AWS-kontoen din. En Codespace starter uten disse, så du må konfigurere dem én gang per Codespace.
+
+Hent `Access Key ID` og `Secret Access Key` fra AWS Academy / IAM, og kjør:
+
+```bash
+aws configure
+```
+
+Fyll inn verdiene når du blir spurt:
+
+- **AWS Access Key ID**: fra kontoen din
+- **AWS Secret Access Key**: fra kontoen din
+- **Default region name**: `eu-west-1`
+- **Default output format**: `json`
+
+Hvis du bruker AWS Academy må du i tillegg sette `AWS_SESSION_TOKEN`. Verifiser at nøklene fungerer:
+
+```bash
+aws sts get-caller-identity
+```
+
+Kommandoen skal returnere konto-ID og bruker-ARN. Får du en feilmelding, er nøklene feil eller utløpt.
+
+**Merk**: Nøklene lagres i `~/.aws/credentials` inne i Codespacen. Hvis Codespacen slettes eller resettes, må du kjøre `aws configure` på nytt.
 
 ### Steg 1: Verifiser miljøet
 
