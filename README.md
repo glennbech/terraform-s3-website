@@ -28,7 +28,6 @@ Gjennom denne øvelsen lærer du om:
 - **CloudFront**: AWS sitt CDN. Distribuerer nettsiden globalt og legger HTTPS på toppen av S3.
 - **Route53**: AWS sin DNS-tjeneste. Brukes til å peke et custom domenenavn mot CloudFront-distribusjonen.
 - **ACM (Certificate Manager)**: Utsteder og håndterer TLS-sertifikater. Brukes til å gi CloudFront et gyldig HTTPS-sertifikat for custom domenet.
-- **DynamoDB**: NoSQL-database. Brukes her kun til state locking slik at to `terraform apply` ikke kan kjøre samtidig mot samme state.
 - **IAM**: Identity and Access Management. Brukes gjennom bucket policies og GitHub Actions-credentials for å styre hvem som kan lese og endre hva.
 
 ## Forberedelser
@@ -347,7 +346,7 @@ Når flere personer jobber med samme infrastruktur, eller når vi skal automatis
 
 ### Steg 1: Opprett Backend-ressurser
 
-Først må vi lage en S3 bucket og DynamoDB-tabell for state management. Disse må opprettes **før** vi konfigurerer backend.
+Først må vi lage en S3 bucket for state management. Bucketen må opprettes **før** vi konfigurerer backend.
 
 1. **Opprett en ny fil** `backend-setup.tf` i rotmappen:
 
@@ -374,29 +373,14 @@ resource "aws_s3_bucket_versioning" "terraform_state" {
   }
 }
 
-resource "aws_dynamodb_table" "terraform_locks" {
-  name         = "ditt-navn-terraform-state-locks"  # Bytt til unikt navn
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-
-  tags = {
-    Name = "Terraform State Locks"
-  }
-}
-
 output "backend_config" {
   value = <<-EOT
     backend "s3" {
-      bucket         = "${aws_s3_bucket.terraform_state.id}"
-      key            = "website/terraform.tfstate"
-      region         = "${data.aws_region.current.name}"
-      dynamodb_table = "${aws_dynamodb_table.terraform_locks.id}"
-      encrypt        = true
+      bucket       = "${aws_s3_bucket.terraform_state.id}"
+      key          = "website/terraform.tfstate"
+      region       = "${data.aws_region.current.name}"
+      use_lockfile = true
+      encrypt      = true
     }
   EOT
   description = "Backend configuration to add to your terraform block"
@@ -420,14 +404,16 @@ Du kan kopiere backend-konfigurasjonen fra output av forrige `terraform apply`, 
 ```hcl
 terraform {
   backend "s3" {
-    bucket         = "ditt-navn-terraform-state"  # Samme som i backend-setup.tf
-    key            = "website/terraform.tfstate"
-    region         = "eu-west-1"  # Din region
-    dynamodb_table = "ditt-navn-terraform-state-locks"  # Samme som i backend-setup.tf
-    encrypt        = true
+    bucket       = "ditt-navn-terraform-state"  # Samme som i backend-setup.tf
+    key          = "website/terraform.tfstate"
+    region       = "eu-west-1"  # Din region
+    use_lockfile = true
+    encrypt      = true
   }
 }
 ```
+
+`use_lockfile = true` ber Terraform om å låse state via en lås-fil i selve S3-bucketen (støttet fra Terraform 1.10).
 
 2. **Migrer state til remote backend**:
 
@@ -441,7 +427,7 @@ Terraform vil spørre om du vil kopiere eksisterende state til det nye backend. 
    - Gå til S3 Console og se at state-filen er lastet opp
    - Din lokale `terraform.tfstate` skal nå være tom eller borte
 
-State er nå lagret sentralt. Hvis flere personer jobber på samme prosjekt, vil de alle dele samme state. I tillegg er dere nå beskyttet mot at flere gjør `terraform apply` samtidig - DynamoDB-tabellen sørger for state locking slik at kun én person kan gjøre endringer om gangen.
+State er nå lagret sentralt. Hvis flere personer jobber på samme prosjekt, vil de alle dele samme state. I tillegg er dere nå beskyttet mot at flere gjør `terraform apply` samtidig — S3-låsefilen sørger for state locking slik at kun én person kan gjøre endringer om gangen.
 
 ### Test State Locking
 
