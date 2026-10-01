@@ -475,6 +475,10 @@ touch modules/s3-website/variables.tf
 touch modules/s3-website/outputs.tf
 ```
 
+**Forklaring:**
+- `mkdir -p` oppretter mappen (og eventuelle manglende mellomliggende mapper); `-p` gjør at kommandoen ikke feiler hvis mappen allerede finnes
+- `touch` oppretter en tom fil hvis den ikke finnes fra før (ellers oppdaterer den bare timestampet) — vi lager tre tomme `.tf`-filer som fylles inn i de neste stegene
+
 Dette gir følgende struktur:
 
 ```
