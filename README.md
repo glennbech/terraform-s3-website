@@ -344,76 +344,25 @@ I denne delen skal vi utvide infrastrukturen med mer avanserte Terraform-konsept
 
 Når flere personer jobber med samme infrastruktur, eller når vi skal automatisere med CI/CD, trenger vi en felles plass å lagre Terraform state. Lokal state fungerer ikke i team-miljøer.
 
-### Steg 1: Opprett Backend-ressurser
+### Steg 1: Konfigurer Backend
 
-Først må vi lage en S3 bucket for state management. Bucketen må opprettes **før** vi konfigurerer backend.
+Klassen har en felles S3 bucket for Terraform state: `pgr301-terraform-state` i `eu-west-1`. Du trenger ikke opprette en egen bucket — bruk denne, men gi din state en unik `key` slik at du ikke overskriver medstudenter.
 
-1. **Opprett en ny fil** `backend-setup.tf` i rotmappen:
-
-```hcl
-# This file creates the resources needed for Terraform remote state
-# Run this FIRST before configuring the backend
-
-data "aws_region" "current" {}
-
-resource "aws_s3_bucket" "terraform_state" {
-  bucket = "ditt-navn-terraform-state"  # Bytt til unikt navn
-
-  tags = {
-    Name        = "Terraform State"
-    Environment = "Infrastructure"
-  }
-}
-
-resource "aws_s3_bucket_versioning" "terraform_state" {
-  bucket = aws_s3_bucket.terraform_state.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
-}
-
-output "backend_config" {
-  value = <<-EOT
-    backend "s3" {
-      bucket       = "${aws_s3_bucket.terraform_state.id}"
-      key          = "website/terraform.tfstate"
-      region       = "${data.aws_region.current.name}"
-      use_lockfile = true
-      encrypt      = true
-    }
-  EOT
-  description = "Backend configuration to add to your terraform block"
-}
-```
-
-2. **Deploy backend-ressursene**:
-
-```bash
-terraform apply
-```
-
-**Merk output** som viser backend-konfigurasjonen du skal bruke.
-
-### Steg 2: Konfigurer Backend
-
-1. **Opprett fil** `backend.tf` i rotmappen.
-
-Du kan kopiere backend-konfigurasjonen fra output av forrige `terraform apply`, eller skrive den manuelt:
+1. **Opprett fil** `backend.tf` i rotmappen:
 
 ```hcl
 terraform {
   backend "s3" {
-    bucket       = "ditt-navn-terraform-state"  # Samme som i backend-setup.tf
-    key          = "website/terraform.tfstate"
-    region       = "eu-west-1"  # Din region
+    bucket       = "pgr301-terraform-state"
+    key          = "ola-nordmann/website/terraform.tfstate"  # Bytt "ola-nordmann" til ditt eget navn
+    region       = "eu-west-1"
     use_lockfile = true
     encrypt      = true
   }
 }
 ```
 
-`use_lockfile = true` ber Terraform om å låse state via en lås-fil i selve S3-bucketen (støttet fra Terraform 1.10).
+`key` er stien til din state-fil inne i bucketen. Prefikset (f.eks. `ola-nordmann/`) skiller din state fra andre studenters. `use_lockfile = true` ber Terraform om å låse state via en lås-fil i selve S3-bucketen (støttet fra Terraform 1.10).
 
 2. **Migrer state til remote backend**:
 
